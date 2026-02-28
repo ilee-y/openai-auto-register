@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 import traceback
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, urlencode
 
@@ -149,6 +149,56 @@ def build_auth_url(code_challenge, state):
 
 
 # ═══════════════════════════════════════════════════════
+# 生成更真实的姓名与生日
+# ═══════════════════════════════════════════════════════
+COMMON_FIRST_NAMES = [
+    "James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph",
+    "Thomas", "Charles", "Christopher", "Daniel", "Matthew", "Anthony", "Mark",
+    "Andrew", "Joshua", "Kevin", "Brian", "George", "Edward", "Mary", "Patricia",
+    "Jennifer", "Linda", "Elizabeth", "Barbara", "Susan", "Jessica", "Sarah",
+    "Karen", "Nancy", "Lisa", "Margaret", "Betty", "Sandra", "Ashley", "Kimberly",
+    "Emily", "Donna", "Michelle", "Dorothy", "Carol", "Amanda", "Melissa",
+]
+
+COMMON_LAST_NAMES = [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+    "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson",
+    "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson",
+    "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson",
+    "Walker", "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen",
+    "Hill", "Flores", "Green", "Adams", "Nelson", "Baker", "Hall",
+]
+
+
+def generate_realistic_name():
+    first = random.choice(COMMON_FIRST_NAMES)
+    last = random.choice(COMMON_LAST_NAMES)
+    # 低概率插入中间名首字母，提升真实感
+    if random.random() < 0.12:
+        middle = random.choice(string.ascii_uppercase)
+        return f"{first} {middle}. {last}"
+    return f"{first} {last}"
+
+
+def generate_realistic_birthday(today=None):
+    if today is None:
+        today = date.today()
+
+    # 重点分布在 20-35 岁，少量分布在 18-45 岁
+    if random.random() < 0.75:
+        age = int(random.triangular(20, 35, 27))
+    else:
+        age = random.randint(18, 45)
+
+    # 根据年龄选一个随机日期
+    birth_year = today.year - age
+    start = date(birth_year, 1, 1)
+    end = date(birth_year, 12, 31)
+    birth_date = start + timedelta(days=random.randint(0, (end - start).days))
+    return birth_date
+
+
+# ═══════════════════════════════════════════════════════
 # 自动化工具函数
 # ═══════════════════════════════════════════════════════
 async def type_slowly(page, locator, text: str):
@@ -160,6 +210,78 @@ async def type_slowly(page, locator, text: str):
         await locator.press_sequentially(char, delay=random.randint(30, 80))
         # 字符之间再停顿 10~50 毫秒
         await page.wait_for_timeout(random.randint(10, 50))
+
+async def fill_birthday_fields(page, birthday):
+    """尽量按页面现有字段填写生日，兼容 input/select；失败时返回 False 供上层回退。"""
+    year_str = str(birthday.year)
+    month_str = str(birthday.month)
+    month_2 = f"{birthday.month:02d}"
+    day_str = str(birthday.day)
+    day_2 = f"{birthday.day:02d}"
+    month_label = birthday.strftime("%B")
+
+    filled_any = False
+
+    async def fill_input(selector, value):
+        locator = page.locator(selector).first
+        if await locator.count() == 0 or not await locator.is_visible():
+            return False
+        await type_slowly(page, locator, value)
+        return True
+
+    async def select_value(selector, values):
+        locator = page.locator(selector).first
+        if await locator.count() == 0 or not await locator.is_visible():
+            return False
+        for val in values:
+            try:
+                await locator.select_option(value=val)
+                return True
+            except:
+                pass
+        for label in values:
+            try:
+                await locator.select_option(label=label)
+                return True
+            except:
+                pass
+        return False
+
+    # 优先走显式的字段，避免只靠 Tab 键顺序
+    year_done = await fill_input(
+        'input[name*="year" i], input[id*="year" i], input[placeholder*="year" i], input[placeholder*="年"]',
+        year_str,
+    )
+    if not year_done:
+        year_done = await select_value(
+            'select[name*="year" i], select[id*="year" i], [data-testid*="year" i] select',
+            [year_str],
+        )
+
+    month_done = await fill_input(
+        'input[name*="month" i], input[id*="month" i], input[placeholder*="month" i], input[placeholder*="月"]',
+        month_str,
+    )
+    if not month_done:
+        month_done = await select_value(
+            'select[name*="month" i], select[id*="month" i], [data-testid*="month" i] select',
+            [month_str, month_2, month_label],
+        )
+
+    day_done = await fill_input(
+        'input[name*="day" i], input[id*="day" i], input[placeholder*="day" i], input[placeholder*="日"]',
+        day_str,
+    )
+    if not day_done:
+        day_done = await select_value(
+            'select[name*="day" i], select[id*="day" i], [data-testid*="day" i] select',
+            [day_str, day_2],
+        )
+
+    filled_any = year_done or month_done or day_done
+    if filled_any:
+        print(f"✅ 已填写生日: {birthday.strftime('%Y-%m-%d')}")
+    return filled_any
 
 async def handle_cloudflare(page):
     """检测并主动点击 Cloudflare 验证码 (Just a moment / Ray ID)"""
@@ -186,10 +308,10 @@ async def move_mouse_organically(page, locator):
             # 目标中心点加一点随机偏移
             target_x = box['x'] + box['width'] / 2 + random.uniform(-5, 5)
             target_y = box['y'] + box['height'] / 2 + random.uniform(-5, 5)
-            
+
             # 当前鼠标位置 (粗略获取)
             start_x, start_y = random.randint(100, 500), random.randint(100, 500)
-            
+
             # 分步骤滑动鼠标 (拟真曲线)
             steps = random.randint(5, 15)
             for i in range(1, steps + 1):
@@ -197,7 +319,7 @@ async def move_mouse_organically(page, locator):
                 partial_y = start_y + (target_y - start_y) * (i / steps) + random.uniform(-10, 10)
                 await page.mouse.move(partial_x, partial_y)
                 await page.wait_for_timeout(random.randint(10, 30))
-                
+
             await page.mouse.move(target_x, target_y)
             await page.wait_for_timeout(random.randint(100, 300))
     except Exception as e:
@@ -498,18 +620,19 @@ async def register_one(browser):
     """)
 
     page = await context.new_page()
-    
+
     # 启用 stealth 插件 (自动处理更多底层指纹)
     await Stealth().apply_stealth_async(page)
 
-    EMAIL = f"{EMAIL_PREFIX}{random.randint(10000,99999)}@{DOMAIN}"
-    NAME = "".join(random.choices(string.ascii_letters, k=random.randint(5, 8))).capitalize()
+    EMAIL = f"{EMAIL_PREFIX}{int(time.time())}@{DOMAIN}"
+    NAME = generate_realistic_name()
+    BIRTHDAY = generate_realistic_birthday()
     log.info(f"开始注册: {EMAIL}")
 
     print(f"\n📋 本次注册信息:")
     print(f"   邮箱: {EMAIL}")
     print(f"   姓名: {NAME}")
-    print(f"   生日: 2000年\n")
+    print(f"   生日: {BIRTHDAY.strftime('%Y-%m-%d')}\n")
 
     try:
         # ——— Step 1: 打开授权 URL ———
@@ -621,7 +744,7 @@ async def register_one(browser):
                         await otp_btn.evaluate("node => node.click()")
                     except:
                         pass
-            
+
             try:
                 # 等待 URL 真正变为验证页，或者有专门的验证码框出现
                 await page.wait_for_url("**/email-verification*", timeout=4000)
@@ -630,7 +753,7 @@ async def register_one(browser):
                 # 如果没因为 url 跳出，尝试看看是不是验证码专用框已经刷出来了
                 if await page.locator('input[name="code"], input[autocomplete="one-time-code"]').count() > 0:
                     break
-        
+
         # 【暴力后备路线】如果点了依然死在当前密码页，强制直接跳转过去！
         if "email-verification" not in page.url and await page.locator('input[name="code"], input[autocomplete="one-time-code"]').count() == 0:
             print("⚠️ 按钮点击可能失效，强制执行页面跳转到 email-verification...")
@@ -704,16 +827,16 @@ async def register_one(browser):
 
                 if otp_verified:
                     break
-                    
+
                 # 【新增】检测是否有明显的错误提示，如果有错误提示说明验证码失效/错误
                 error_msg = page.locator("text=需要填写验证码, text=验证码无效, text=验证码错误, text=code is invalid, text=incorrect").first
                 if await error_msg.count() > 0 and await error_msg.is_visible():
                     print(f"⚠️ 页面提示验证码错误/无效！")
                 else:
                     print(f"⚠️ 提交后未发生跳转，可能验证码错误或提交失败...")
-                    
+
                 print(f"🔄 第 {otp_retries + 1} 次重试...")
-                
+
                 # 为了下次能重新填入新的验证码，清空旧输入框
                 try:
                     await otp_input.clear(timeout=1000)
@@ -735,24 +858,35 @@ async def register_one(browser):
 
         # ——— Step 4: 填写个人信息 ———
         name_input = page.locator('input[name="name"], input[placeholder*="名"], input[type="text"]').first
-        
+
         # 为了防止前面检测后还没加载完全，这里稍等一下可见
         await name_input.wait_for(state="visible", timeout=10000)
-        
+
         await type_slowly(page, name_input, NAME)
         print(f"✅ 已填写姓名: {NAME}")
 
         await page.wait_for_timeout(random.randint(300, 800))
+        # 按页面常见焦点顺序填写生日：年 -> 月 -> 日
         await page.keyboard.press("Tab")
-        await page.wait_for_timeout(random.randint(100, 300))
-        await page.keyboard.type("2000", delay=random.randint(50, 150))
-        print("✅ 已填写年份: 2000")
+        await page.wait_for_timeout(random.randint(80, 200))
+        await page.keyboard.type(str(BIRTHDAY.year), delay=random.randint(50, 150))
+        print(f"✅ 已填写年份: {BIRTHDAY.year}")
+
+        await page.keyboard.press("Tab")
+        await page.wait_for_timeout(random.randint(80, 200))
+        await page.keyboard.type(f"{BIRTHDAY.month:02d}", delay=random.randint(50, 120))
+        print(f"✅ 已填写月份: {BIRTHDAY.month:02d}")
+
+        await page.keyboard.press("Tab")
+        await page.wait_for_timeout(random.randint(80, 200))
+        await page.keyboard.type(f"{BIRTHDAY.day:02d}", delay=random.randint(50, 120))
+        print(f"✅ 已填写日期: {BIRTHDAY.day:02d}")
 
         for attempt in range(3):
             continue_btn = page.get_by_role("button", name="继续")
             if await continue_btn.count() == 0:
                 continue_btn = page.get_by_role("button", name="Continue")
-            
+
             if await continue_btn.count() > 0:
                 try:
                     await continue_btn.click(timeout=3000)
@@ -768,7 +902,7 @@ async def register_one(browser):
                 if "about-you" not in page.url:
                     auto_navigated = True
                     break
-            
+
             if not auto_navigated:
                 # 6秒内未动弹，强制跳到 consent 页面
                 print(f"⚠️ 6秒内未检测到自动跳转，强制前往同意授权页面 (consent)...")
@@ -776,7 +910,7 @@ async def register_one(browser):
                     await page.goto("https://auth.openai.com/sign-in-with-chatgpt/codex/consent", timeout=8000)
                 except:
                     pass
-            
+
             # 到达 consent 页面则点击通过按钮
             if "consent" in page.url:
                 consent_btn = page.locator('button:has-text("继续"), button:has-text("Continue"), button:has-text("Accept"), button:has-text("同意")').first
@@ -786,7 +920,7 @@ async def register_one(browser):
                         print("✅ 已在 consent 页面点击最终通过按钮")
                     except:
                         pass
-            
+
             if "consent" in page.url or "about-you" in page.url:
                 await page.wait_for_timeout(1000)
             else:
@@ -879,7 +1013,7 @@ async def main():
                 "--no-first-run",
                 "--no-default-browser-check",
             ]
-            
+
             # 伪无头模式：headless=True 时把窗口推到屏幕外，躲避最严的 Headless 检测
             if HEADLESS:
                 args.extend([
@@ -908,7 +1042,7 @@ async def main():
             while True:
                 if RUN_COUNT != 0 and i >= RUN_COUNT:
                     break
-                    
+
                 print(f"\n{'='*60}")
                 print(f"📌 第 {i+1}{f'/{RUN_COUNT}' if RUN_COUNT > 0 else ''} 轮注册")
                 print(f"{'='*60}")
@@ -940,9 +1074,9 @@ async def main():
                         for remaining in range(RUN_INTERVAL, 0, -step):
                             print(f"   剩余: {remaining}s")
                             await asyncio.sleep(min(step, remaining))
-                            
+
                     print("   开始!")
-                
+
                 i += 1
 
             try:
