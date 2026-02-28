@@ -21,6 +21,9 @@ from urllib.parse import urlparse, parse_qs, urlencode
 # 第三方库
 import httpx
 from imap_tools import MailBox
+from imap_tools.errors import MailboxUidsError
+from imap_tools.utils import check_command_status
+import types
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
@@ -344,6 +347,26 @@ async def get_verification_code(email: str, timeout=60):
     email_lower = email.lower()
     try:
         with MailBox(IMAP_HOST, port=IMAP_PORT).login(IMAP_USER, IMAP_PASS) as mailbox:
+            # 某些 IMAP 服务器不接受 "UID SEARCH CHARSET ..."，这里做兜底兼容
+            def _safe_uids(self, criteria='ALL', charset='US-ASCII', sort=None):
+                encoded = criteria if isinstance(criteria, bytes) else str(criteria).encode(charset)
+                try:
+                    if sort:
+                        sort = (sort,) if isinstance(sort, str) else sort
+                        uid_result = self.client.uid('SORT', f'({" ".join(sort)})', charset, encoded)
+                    else:
+                        uid_result = self.client.uid('SEARCH', 'CHARSET', charset, encoded)
+                    check_command_status(uid_result, MailboxUidsError)
+                except Exception:
+                    # 回退：不带 CHARSET
+                    if sort:
+                        uid_result = self.client.uid('SORT', f'({" ".join(sort)})', encoded)
+                    else:
+                        uid_result = self.client.uid('SEARCH', encoded)
+                    check_command_status(uid_result, MailboxUidsError)
+                return uid_result[1][0].decode().split() if uid_result[1][0] else []
+
+            mailbox.uids = types.MethodType(_safe_uids, mailbox)
             while time.time() - start < timeout:
                 try:
                     mailbox.client.noop()
