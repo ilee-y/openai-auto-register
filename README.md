@@ -1,7 +1,8 @@
 # OpenAI 账号自动注册工具
 
 > 支持 **纯 API 协议注册**（推荐）和 **浏览器自动化注册**（旧版）两种模式。  
-> 账号格式：`邮箱----密码` 或 `邮箱----密码----client_id----refresh_token`
+> 账号格式： `邮箱----密码----client_id----refresh_token`
+> 项目仅供参考学习，请勿滥用！！！
 
 ---
 
@@ -11,7 +12,7 @@
 openai-auto-register/
 ├── api-register-go/      ← ⚡ 高并发：Go 版，支持数十账号同时注册，资源占用极低
 ├── api-register-py/      ← 🛡️ 高稳定：Python 版，逻辑清晰，出错重试完善，适合稳跑
-└── browser-register-py/  ← 旧版浏览器自动化（Playwright，速度较慢）
+└── browser-register-py/  ← 旧版浏览器自动化（Playwright，速度较慢，几乎不可用了）
 ```
 
 ### 如何选择？
