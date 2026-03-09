@@ -542,6 +542,8 @@ async def register_one(browser):
     state = generate_state()
     auth_url = build_auth_url(code_challenge, state)
 
+    print("auth_url: ", auth_url)
+
     print("=" * 60)
     print("🔐 开始新一轮注册流程")
     print("=" * 60)
@@ -555,7 +557,7 @@ async def register_one(browser):
 
     # 每轮创建全新的浏览器上下文（= 无痕窗口，session/cookies 完全隔离）
     context = await browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         viewport={"width": 1920 if HEADLESS else 600, "height": 1080 if HEADLESS else 800},
         locale="zh-CN",
         timezone_id="Asia/Shanghai",
@@ -883,7 +885,7 @@ async def register_one(browser):
         print(f"✅ 已填写日期: {BIRTHDAY.day:02d}")
 
         for attempt in range(3):
-            continue_btn = page.get_by_role("button", name="继续")
+            continue_btn = page.get_by_role("button", name="完成帐户创建", exact=True)
             if await continue_btn.count() == 0:
                 continue_btn = page.get_by_role("button", name="Continue")
 
